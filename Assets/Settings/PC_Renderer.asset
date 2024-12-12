@@ -69,6 +69,7 @@ MonoBehaviour:
   material: {fileID: 2100000, guid: 14c570d385b064d46941634bf3cf8247, type: 2}
   renderPassEvent: 50
   approach: 1
+  multiScattering: 1
 --- !u!114 &7833122117494664109
 MonoBehaviour:
   m_ObjectHideFlags: 0

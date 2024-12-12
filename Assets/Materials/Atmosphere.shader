@@ -30,7 +30,6 @@ Shader "Hidden/RayMarchingAtmosphere"
         ZWrite Off
         ZTest Always
 
-        // 0
         Pass
         {
             Name "Ray Marching Atmosphere"
@@ -46,21 +45,19 @@ Shader "Hidden/RayMarchingAtmosphere"
             float4 frag(VertexOutput input) : SV_Target
             {
                 AtmoParams params = GetAtmoParams();
-                Light sun = GetMainLight();
+                float3 sunDir = _MainLightPosition.xyz;
+                float3 sunColor = _MainLightColor.rgb;
                 float3 viewDir = ScreenUvToWorldDir(input.uv);
-                float3 viewPos = float3(0, _PlanetRadius, 0);
+                float3 viewPos = float3(0, _PlanetRadius + _WorldSpaceCameraPos.y, 0);
 
-                if (dot(viewDir, sun.direction) > 1 - _SunRadius && viewDir.y > 0)
-                {
-                    return float4(sun.color, 1);
-                }
+                float3 atmo = RayMarchTransmittance(viewPos, viewDir, sunDir, params);
+                float3 sun = SunDisk(viewDir, sunDir, sunColor);
 
-                return float4(RayMarchTransmittance(viewPos, viewDir, sun.direction, sun.color, params), 1);
+                return float4(atmo + sun, 1);
             }
             ENDHLSL
         }
 
-        // 1
         Pass
         {
             Name "Transmittance Precomputation"
@@ -78,7 +75,7 @@ Shader "Hidden/RayMarchingAtmosphere"
                 float3 viewDir = float3(sqrt(1 - lutParams.y * lutParams.y), lutParams.y, 0);
                 float3 viewPos = float3(0, lutParams.x, 0);
 
-                float atmoDist = RayIntersectSphere(0, params.atmoThickness + params.planetRadius, viewPos, viewDir);
+                float atmoDist = RayIntersectSphere(0, _PlanetRadius + _AtmosphereThickness, viewPos, viewDir);
                 float3 intersection = viewPos + atmoDist * viewDir;
 
                 return float4(Transmittance(viewPos, intersection, _Samples, params), 1);
@@ -86,7 +83,30 @@ Shader "Hidden/RayMarchingAtmosphere"
             ENDHLSL
         }
 
-        // 2
+
+        Pass
+        {
+            Name "Multi-Scattering Precomputation"
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "FullscreenVertex.hlsl"
+            #include "AtmosphereCommon.hlsl"
+
+            float4 frag(VertexOutput input) : SV_Target
+            {
+                AtmoParams params = GetAtmoParams();
+                float sunCosZenithAngle = input.uv.x;
+                float sunSinZenithAngle = SafeSqrt(1 - sunCosZenithAngle * sunCosZenithAngle);
+                float3 sunDir = float3(sunSinZenithAngle, sunCosZenithAngle, 0);
+                float3 viewPos = float3(0, input.uv.y * _AtmosphereThickness + _PlanetRadius, 0);
+
+                return float4(RayMarchMultiScattering(viewPos, sunDir, params), 1);
+            }
+            ENDHLSL
+        }
+
         Pass
         {
             Name "Sky View Precomputation"
@@ -102,21 +122,21 @@ Shader "Hidden/RayMarchingAtmosphere"
             {
                 AtmoParams params = GetAtmoParams();
                 float3 sunDir = _MainLightPosition.xyz;
-                float3 sunColor = _MainLightColor.rgb;
 
-                // -pi ~ pi
-                float phi = (input.uv.x * 2 - 1) * PI;
-                // -pi/2 ~ pi/2
-                float theta = (1 - input.uv.y) * PI;
+                // 0 ~ 2pi
+                float phi = input.uv.x * 2 * PI;
+                // 0 ~ pi
+                float theta = input.uv.y * PI;
                 float3 viewDir = PolarToCartesian(float2(phi, theta));
-                float3 viewPos = float3(0, _PlanetRadius, 0);
+                float3 viewPos = float3(0, _PlanetRadius + _WorldSpaceCameraPos.y, 0);
 
-                return float4(RayMarchSkyView(viewPos, viewDir, sunDir, sunColor, params), 1);
+                return float4(RayMarchSkyView(viewPos, viewDir, sunDir, params), 1);
+                // return _TransmittanceLut.Sample(sampler_LinearClamp, input.uv) + _MultiScatteringLut.Sample(
+                //     sampler_LinearClamp, input.uv);
             }
             ENDHLSL
         }
 
-        // 3
         Pass
         {
             Name "Sky View Lookup"
@@ -134,17 +154,14 @@ Shader "Hidden/RayMarchingAtmosphere"
                 float3 sunColor = _MainLightColor.rgb;
                 float3 viewDir = ScreenUvToWorldDir(input.uv);
 
-                if (dot(viewDir, sunDir) > 1 - _SunRadius && viewDir.y > 0)
-                {
-                    return float4(sunColor, 1);
-                }
+                float3 atmo = LookupSkyView(viewDir) * sunColor;
+                float3 sun = SunDisk(viewDir, sunDir, sunColor);
 
-                return float4(LookupSkyView(viewDir), 1);
+                return float4(atmo + sun, 1);
             }
             ENDHLSL
         }
 
-        // 4
         Pass
         {
             Name "Ray Marching Sky View"
@@ -157,24 +174,15 @@ Shader "Hidden/RayMarchingAtmosphere"
             #include "AtmosphereCommon.hlsl"
             #include "Math.hlsl"
 
-            float3 SunDisk(float3 viewDir, float3 sunDir, float3 sunColor)
-            {
-                if (dot(viewDir, sunDir) > 1 - _SunRadius && viewDir.y > -0.05)
-                {
-                    return float4(sunColor, 1);
-                }
-                return 0;
-            }
-
             float4 frag(VertexOutput input) : SV_Target
             {
                 AtmoParams params = GetAtmoParams();
                 float3 sunDir = _MainLightPosition.xyz;
                 float3 sunColor = _MainLightColor.rgb;
                 float3 viewDir = ScreenUvToWorldDir(input.uv);
-                float3 viewPos = float3(0, _PlanetRadius, 0);
+                float3 viewPos = float3(0, _PlanetRadius + _WorldSpaceCameraPos.y, 0);
 
-                float3 atmo = RayMarchSkyView(viewPos, viewDir, sunDir, sunColor, params);
+                float3 atmo = RayMarchSkyView(viewPos, viewDir, sunDir, params) * sunColor;
                 float3 sun = SunDisk(viewDir, sunDir, sunColor);
 
                 return float4(atmo + sun, 1);

@@ -27,6 +27,7 @@ float _AbsorptionIntensity;
 float _SunRadius;
 
 TEXTURE2D(_TransmittanceLut);
+TEXTURE2D(_MultiScatteringLut);
 TEXTURE2D(_SkyViewLut);
 
 struct AtmoParams
@@ -102,9 +103,9 @@ float3 OzoneAbsorption(float h, AtmoParams params)
     return params.ozoneAbsorption * rho;
 }
 
-float3 Scattering(float3 p, float3 in_dir, float3 out_dir, in AtmoParams params)
+float3 Scattering(float3 p, float3 inDir, float3 outDir, in AtmoParams params)
 {
-    float cosTheta = dot(in_dir, out_dir);
+    float cosTheta = dot(inDir, outDir);
     float h = length(p) - params.planetRadius;
 
     float attenRayleigh = Attenuation(h, params.rayleighScalarHeight);
@@ -138,7 +139,7 @@ float3 Transmittance(float3 p1, float3 p2, int samples, in AtmoParams params)
 
 /// Returns [
 ///     distance between sample point and planet center,
-///     cosine angle between light direction and up vector
+///     cosine of angle between light direction and up vector
 /// ]
 float2 ScreenUvToLutParams(float2 uv, in AtmoParams params)
 {
@@ -183,49 +184,110 @@ float2 LutParamsToLutUv(float2 lutParams, in AtmoParams params)
     return float2((d - dMin) / (dMax - dMin), rho / H);
 }
 
-float3 RayMarchTransmittance(float3 viewPos, float3 viewDir, float3 sunDir, float3 sunColor, in AtmoParams params)
+float3 RayMarchTransmittance(float3 viewPos, float3 viewDir, float3 sunDir, in AtmoParams params)
 {
-    float ds = _AtmosphereThickness / _Samples;
-    float viewAtmoDist = RayIntersectSphere(0, _PlanetRadius + _AtmosphereThickness, viewPos, viewDir);
-    float3 viewAtmoIntersection = viewPos + viewAtmoDist * viewDir;
+    float viewAtmoDist = RayIntersectSphere(0, params.planetRadius + params.atmoThickness, viewPos, viewDir);
+    float viewPlanetDist = RayIntersectSphere(0, params.planetRadius, viewPos, viewDir);
+    if (viewPlanetDist > 0) viewAtmoDist = viewPlanetDist;
+    float ds = viewAtmoDist / _Samples;
 
     float3 sum = 0;
 
     for (int i = 0; i < _Samples; i++)
     {
-        float3 p1 = lerp(viewPos, viewAtmoIntersection, (float(i) + 0.5) / _Samples);
-        float3 sampleAtmoDist = RayIntersectSphere(0, _PlanetRadius + _AtmosphereThickness, p1, sunDir);
+        float3 p1 = viewPos + (float(i) + 0.5) / _Samples * viewAtmoDist * viewDir;
+        float3 sampleAtmoDist = RayIntersectSphere(0, params.planetRadius + params.atmoThickness, p1, sunDir);
         float3 p2 = p1 + sunDir * sampleAtmoDist;
 
         float3 t1 = Transmittance(p1, p2, _Samples, params);
         float3 s = Scattering(p1, sunDir, viewDir, params);
         float3 t2 = Transmittance(p1, viewPos, _Samples, params);
 
-        float3 in_scattering = t1 * s * t2 * ds * sunColor;
+        float3 in_scattering = t1 * s * t2 * ds;
         sum += in_scattering;
     }
 
     return sum;
 }
 
-float3 LookupTransmittance(float3 viewPos, float3 sunDir, in AtmoParams params)
+float3 LookupTransmittanceToAtmosphere(float3 viewPos, float3 sunDir, in AtmoParams params)
 {
     float2 uv = LutParamsToLutUv(float2(length(viewPos), sunDir.y), params);
     return _TransmittanceLut.SampleLevel(sampler_LinearClamp, uv, 0).rgb;
 }
 
-float3 RayMarchSkyView(float3 viewPos, float3 viewDir, float3 sunDir, float3 sunColor, in AtmoParams params)
+float3 RayMarchMultiScattering(float3 viewPos, float3 sunDir, in AtmoParams params)
 {
-    float ds = _AtmosphereThickness / _Samples;
-    float viewAtmoDist = RayIntersectSphere(0, _PlanetRadius + _AtmosphereThickness, viewPos, viewDir);
-    float3 viewAtmoIntersection = viewPos + viewAtmoDist * viewDir;
+    const float isotropicPhaseFn = 1 / (4 * PI);
+
+    float3 g2 = 0;
+    float3 multiScattering = 0;
+
+    for (int phi = 0; phi < _Samples; phi++)
+    {
+        for (int theta = 0; theta < _Samples; theta++)
+        {
+            float2 polar = float2((float)phi / _Samples * 2 * PI, ((float)theta + 0.5) / _Samples * PI);
+            float3 viewDir = PolarToCartesian(polar);
+
+            float viewAtmoDist = RayIntersectSphere(0, params.planetRadius + params.atmoThickness, viewPos, viewDir);
+            float viewPlanetDist = RayIntersectSphere(0, params.planetRadius, viewPos, viewDir);
+            if (viewPlanetDist > 0) viewAtmoDist = viewPlanetDist;
+            float ds = viewAtmoDist / _Samples;
+
+            float3 opticalDepth = 0;
+
+            for (int i = 0; i < _Samples; i++)
+            {
+                float3 p = viewPos + (float(i) + 0.5) / _Samples * viewAtmoDist * viewDir;
+                float h = length(p) - params.planetRadius;
+
+                float3 scatter = RayleighScattering(h, params) + MieScattering(h, params);
+                float3 absorption = OzoneAbsorption(h, params) + MieAbsorption(h, params);
+                float3 extinction = scatter + absorption;
+                opticalDepth += extinction * ds;
+
+                float3 t1 = LookupTransmittanceToAtmosphere(p, sunDir, params);
+                float3 s = Scattering(p, sunDir, viewDir, params);
+                float3 t2 = exp(-opticalDepth);
+
+                g2 += t1 * s * t2 * isotropicPhaseFn * ds;
+                multiScattering += t2 * scatter * isotropicPhaseFn * ds;
+            }
+        }
+    }
+
+    const float dOmega = 4 * PI / (_Samples * _Samples);
+    g2 *= dOmega;
+    multiScattering *= dOmega;
+    return g2 / (1 - multiScattering);
+}
+
+float3 LookupMultiScattering(float3 viewPos, float3 sunDir, in AtmoParams params)
+{
+    float h = length(viewPos) - params.planetRadius;
+    float sunCosZenithAngle = dot(normalize(viewPos), sunDir);
+    float3 scattering = RayleighScattering(h, params) + MieScattering(h, params);
+
+    float2 uv = float2(sunCosZenithAngle, h / params.atmoThickness);
+    float3 g = _MultiScatteringLut.SampleLevel(sampler_LinearClamp, uv, 0);
+
+    return g * scattering;
+}
+
+float3 RayMarchSkyView(float3 viewPos, float3 viewDir, float3 sunDir, in AtmoParams params)
+{
+    float viewAtmoDist = RayIntersectSphere(0, params.planetRadius + params.atmoThickness, viewPos, viewDir);
+    float viewPlanetDist = RayIntersectSphere(0, params.planetRadius, viewPos, viewDir);
+    if (viewPlanetDist > 0) viewAtmoDist = viewPlanetDist;
+    float ds = viewAtmoDist / _Samples;
 
     float3 sum = 0;
     float3 opticalDepth = 0;
 
     for (int i = 0; i < _Samples; i++)
     {
-        float3 p1 = lerp(viewPos, viewAtmoIntersection, (float(i) + 0.5) / _Samples);
+        float3 p1 = viewPos + (float(i) + 0.5) / _Samples * viewAtmoDist * viewDir;
 
         float h = length(p1) - params.planetRadius;
         float3 scatter = RayleighScattering(h, params) + MieScattering(h, params);
@@ -233,12 +295,15 @@ float3 RayMarchSkyView(float3 viewPos, float3 viewDir, float3 sunDir, float3 sun
         float3 extinction = scatter + absorption;
         opticalDepth += extinction * ds;
 
-        float3 t1 = LookupTransmittance(p1, sunDir, params);
+        float3 t1 = LookupTransmittanceToAtmosphere(p1, sunDir, params);
         float3 s = Scattering(p1, sunDir, viewDir, params);
         float3 t2 = exp(-opticalDepth);
 
-        float3 in_scattering = t1 * s * t2 * ds * sunColor;
+        float3 in_scattering = t1 * s * t2 * ds;
         sum += in_scattering;
+
+        float3 multiScattering = LookupMultiScattering(p1, sunDir, params) * t2 * ds;
+        sum += multiScattering;
     }
 
     return sum;
@@ -247,10 +312,17 @@ float3 RayMarchSkyView(float3 viewPos, float3 viewDir, float3 sunDir, float3 sun
 float3 LookupSkyView(float3 viewDir)
 {
     float2 polar = CartesianToPolar(viewDir) / float2(2 * PI, PI);
-    polar.y = 1 - polar.y;
-    polar.x += 0.5;
 
     return _SkyViewLut.Sample(sampler_LinearRepeat, polar).rgb;
+}
+
+float3 SunDisk(float3 viewDir, float3 sunDir, float3 sunColor)
+{
+    if (dot(viewDir, sunDir) > 1 - _SunRadius && viewDir.y > 0)
+    {
+        return sunColor;
+    }
+    return 0;
 }
 
 #endif
