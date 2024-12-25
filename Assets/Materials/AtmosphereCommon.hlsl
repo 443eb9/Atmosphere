@@ -26,9 +26,12 @@ float _ScatterIntensity;
 float _AbsorptionIntensity;
 float _SunRadius;
 
+float _AerialPerspectiveMaxDist;
+
 TEXTURE2D(_TransmittanceLut);
 TEXTURE2D(_MultiScatteringLut);
 TEXTURE2D(_SkyViewLut);
+TEXTURE2D(_AerialPerspectiveLut);
 
 struct AtmoParams
 {
@@ -266,7 +269,7 @@ float3 RayMarchMultiScattering(float3 viewPos, float3 sunDir, in AtmoParams para
 float3 LookupMultiScattering(float3 viewPos, float3 sunDir, in AtmoParams params)
 {
     float h = length(viewPos) - params.planetRadius;
-    float sunCosZenithAngle = dot(normalize(viewPos), sunDir);
+    float sunCosZenithAngle = dot(normalize(viewPos), sunDir) * 0.5 + 0.5;
     float3 scattering = RayleighScattering(h, params) + MieScattering(h, params);
 
     float2 uv = float2(sunCosZenithAngle, h / params.atmoThickness);
@@ -275,11 +278,12 @@ float3 LookupMultiScattering(float3 viewPos, float3 sunDir, in AtmoParams params
     return g * scattering;
 }
 
-float3 RayMarchSkyView(float3 viewPos, float3 viewDir, float3 sunDir, in AtmoParams params)
+float3 RayMarchSkyView(float3 viewPos, float3 viewDir, float3 sunDir, in AtmoParams params, float maxRayLen = -1)
 {
     float viewAtmoDist = RayIntersectSphere(0, params.planetRadius + params.atmoThickness, viewPos, viewDir);
     float viewPlanetDist = RayIntersectSphere(0, params.planetRadius, viewPos, viewDir);
     if (viewPlanetDist > 0) viewAtmoDist = viewPlanetDist;
+    if (maxRayLen > 0) viewAtmoDist = min(viewAtmoDist, maxRayLen);
     float ds = viewAtmoDist / _Samples;
 
     float3 sum = 0;

@@ -22,6 +22,8 @@ Shader "Hidden/RayMarchingAtmosphere"
         _AbsorptionIntensity("Absorption Intensity", Float) = 0.000001
 
         _SunRadius("Sun Radius", Float) = 0.2
+
+        _AerialPerspectiveMaxDist("Aerial Perspective Max Dist", Float) = 320000
     }
 
     SubShader
@@ -97,7 +99,7 @@ Shader "Hidden/RayMarchingAtmosphere"
             float4 frag(VertexOutput input) : SV_Target
             {
                 AtmoParams params = GetAtmoParams();
-                float sunCosZenithAngle = input.uv.x;
+                float sunCosZenithAngle = input.uv.x * 2 - 1;
                 float sunSinZenithAngle = SafeSqrt(1 - sunCosZenithAngle * sunCosZenithAngle);
                 float3 sunDir = float3(sunSinZenithAngle, sunCosZenithAngle, 0);
                 float3 viewPos = float3(0, input.uv.y * _AtmosphereThickness + _PlanetRadius, 0);
@@ -131,8 +133,6 @@ Shader "Hidden/RayMarchingAtmosphere"
                 float3 viewPos = float3(0, _PlanetRadius + _WorldSpaceCameraPos.y, 0);
 
                 return float4(RayMarchSkyView(viewPos, viewDir, sunDir, params), 1);
-                // return _TransmittanceLut.Sample(sampler_LinearClamp, input.uv) + _MultiScatteringLut.Sample(
-                //     sampler_LinearClamp, input.uv);
             }
             ENDHLSL
         }
@@ -186,6 +186,88 @@ Shader "Hidden/RayMarchingAtmosphere"
                 float3 sun = SunDisk(viewDir, sunDir, sunColor);
 
                 return float4(atmo + sun, 1);
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "Aerial Perspective Precomputation"
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            #include "FullscreenVertex.hlsl"
+            #include "AtmosphereCommon.hlsl"
+            #include "Math.hlsl"
+
+            float4 frag(VertexOutput input) : SV_Target
+            {
+                const int VOXEL_CNT = 32;
+
+                float texelX = input.uv.x * VOXEL_CNT * VOXEL_CNT;
+                float texelY = input.uv.y * VOXEL_CNT;
+
+                float voxelX = fmod(texelX, VOXEL_CNT);
+                float voxelY = texelY;
+                float voxelZ = texelX / VOXEL_CNT;
+
+                AtmoParams params = GetAtmoParams();
+                float3 sunDir = _MainLightPosition.xyz;
+                float3 sunColor = _MainLightColor.rgb;
+                float3 viewDir = ScreenUvToWorldDir(float2(voxelX, voxelY) / VOXEL_CNT);
+                float3 viewPos = float3(0, _PlanetRadius + _WorldSpaceCameraPos.y, 0);
+
+                float voxelDist = _AerialPerspectiveMaxDist * (voxelZ / VOXEL_CNT);
+                float3 voxelPos = viewPos + viewDir * voxelDist;
+
+                float3 sky = RayMarchSkyView(viewPos, viewDir, sunDir, params, voxelDist) * sunColor;
+                float3 transmittanceEye = LookupTransmittanceToAtmosphere(viewPos, sunDir, params);
+                float3 transmittanceVoxel = LookupTransmittanceToAtmosphere(voxelPos, sunDir, params);
+                float3 transmittance = transmittanceEye / transmittanceVoxel;
+
+                return float4(sky, dot(transmittance, 1.0 / 3.0));
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "Aerial Perspective Lookup"
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareOpaqueTexture.hlsl"
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/GlobalSamplers.hlsl"
+            #include "FullscreenVertex.hlsl"
+            #include "AtmosphereCommon.hlsl"
+
+            float4 frag(VertexOutput input) : SV_Target
+            {
+                const int VOXEL_CNT = 32;
+
+                float3 sceneColor = SampleSceneColor(input.uv).rgb;
+                float depth = SampleSceneDepth(input.uv);
+                if (depth == 0.0) return float4(sceneColor, 1);
+                float z = Linear01Depth(depth, _ZBufferParams);
+
+                float voxelZFloor = floor(z * VOXEL_CNT);
+                float voxelZCeil = ceil(z * VOXEL_CNT);
+
+                float sampleXFloor = input.uv.x / VOXEL_CNT + voxelZFloor / VOXEL_CNT;
+                float sampleXCeil = input.uv.x / VOXEL_CNT + voxelZCeil / VOXEL_CNT;
+                float sampleY = input.uv.y;
+
+                float4 persp = lerp(
+                    SAMPLE_TEXTURE2D(_AerialPerspectiveLut, sampler_LinearClamp, float2(sampleXFloor, sampleY)),
+                    SAMPLE_TEXTURE2D(_AerialPerspectiveLut, sampler_LinearClamp, float2(sampleXCeil, sampleY)),
+                    frac(z)
+                );
+
+                return float4(sceneColor * persp.a + persp.rgb, 1);
             }
             ENDHLSL
         }
