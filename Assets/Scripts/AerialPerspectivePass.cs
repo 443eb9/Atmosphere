@@ -23,22 +23,22 @@ public class AerialPerspectivePass : ScriptableRenderPass
         var resourcesData = frameData.Get<UniversalResourceData>();
         
         using (var builder =
-               renderGraph.AddRasterRenderPass<Atmosphere.DummyPassData>(Atmosphere.PassNames.AerialPerspectivePrecomputation, out _))
+               renderGraph.AddRasterRenderPass<Sky.DummyPassData>(Sky.SkyPassNames.AerialPerspectivePrecomputation, out _))
         {
             builder.UseTexture(luts.transmittanceLut);
             builder.UseTexture(luts.multiScatteringLut);
             builder.SetRenderAttachment(luts.aerialPerspectiveLut, 0);
             builder.AllowPassCulling(false);
 
-            builder.SetRenderFunc((Atmosphere.DummyPassData _, RasterGraphContext context) =>
+            builder.SetRenderFunc((Sky.DummyPassData _, RasterGraphContext context) =>
             {
-                _properties.SetTexture(Atmosphere.ShaderProps.TransmittanceLut, luts.transmittanceLut);
-                _properties.SetTexture(Atmosphere.ShaderProps.MultiScatteringLut, luts.multiScatteringLut);
+                _properties.SetTexture(Sky.SkyShaderExtraProps.TransmittanceLut, luts.transmittanceLut);
+                _properties.SetTexture(Sky.SkyShaderExtraProps.MultiScatteringLut, luts.multiScatteringLut);
 
                 context.cmd.DrawProcedural(
                     Matrix4x4.identity,
                     _material,
-                    (int)Atmosphere.PassIndices.AerialPerspectivePrecomputation,
+                    (int)Sky.SkyPassIndices.AerialPerspectivePrecomputation,
                     MeshTopology.Triangles,
                     3,
                     1,
@@ -48,19 +48,19 @@ public class AerialPerspectivePass : ScriptableRenderPass
         }
 
         using (var builder =
-               renderGraph.AddRasterRenderPass<Atmosphere.DummyPassData>(Atmosphere.PassNames.AerialPerspectiveLookup, out _))
+               renderGraph.AddRasterRenderPass<Sky.DummyPassData>(Sky.SkyPassNames.AerialPerspectiveLookup, out _))
         {
             builder.UseTexture(luts.aerialPerspectiveLut);
             builder.SetRenderAttachment(resourcesData.activeColorTexture, 0);
 
-            builder.SetRenderFunc((Atmosphere.DummyPassData _, RasterGraphContext context) =>
+            builder.SetRenderFunc((Sky.DummyPassData _, RasterGraphContext context) =>
             {
-                _properties.SetTexture(Atmosphere.ShaderProps.AerialPerspectiveLut, luts.aerialPerspectiveLut);
+                _properties.SetTexture(Sky.SkyShaderExtraProps.AerialPerspectiveLut, luts.aerialPerspectiveLut);
 
                 context.cmd.DrawProcedural(
                     Matrix4x4.identity,
                     _material,
-                    (int)Atmosphere.PassIndices.AerialPerspectiveLookup,
+                    (int)Sky.SkyPassIndices.AerialPerspectiveLookup,
                     MeshTopology.Triangles,
                     3,
                     1,

@@ -22,16 +22,16 @@ public class AtmospherePass : ScriptableRenderPass
         var resourcesData = frameData.Get<UniversalResourceData>();
 
         using (var builder =
-               renderGraph.AddRasterRenderPass<Atmosphere.DummyPassData>(Atmosphere.PassNames.TransmittancePrecomputation, out _))
+               renderGraph.AddRasterRenderPass<Sky.DummyPassData>(Sky.SkyPassNames.TransmittancePrecomputation, out _))
         {
             builder.SetRenderAttachment(luts.transmittanceLut, 0);
 
-            builder.SetRenderFunc((Atmosphere.DummyPassData _, RasterGraphContext context) =>
+            builder.SetRenderFunc((Sky.DummyPassData _, RasterGraphContext context) =>
             {
                 context.cmd.DrawProcedural(
                     Matrix4x4.identity,
                     _material,
-                    (int)Atmosphere.PassIndices.TransmittancePrecomputation,
+                    (int)Sky.SkyPassIndices.TransmittancePrecomputation,
                     MeshTopology.Triangles,
                     3,
                     1,
@@ -41,17 +41,17 @@ public class AtmospherePass : ScriptableRenderPass
         }
 
         using (var builder =
-               renderGraph.AddRasterRenderPass<Atmosphere.DummyPassData>(Atmosphere.PassNames.MultiScatteringPrecomputation, out _))
+               renderGraph.AddRasterRenderPass<Sky.DummyPassData>(Sky.SkyPassNames.MultiScatteringPrecomputation, out _))
         {
             builder.UseTexture(luts.transmittanceLut);
             builder.SetRenderAttachment(luts.multiScatteringLut, 0);
 
-            builder.SetRenderFunc((Atmosphere.DummyPassData _, RasterGraphContext context) =>
+            builder.SetRenderFunc((Sky.DummyPassData _, RasterGraphContext context) =>
             {
                 context.cmd.DrawProcedural(
                     Matrix4x4.identity,
                     _material,
-                    (int)Atmosphere.PassIndices.MultiScatteringPrecomputation,
+                    (int)Sky.SkyPassIndices.MultiScatteringPrecomputation,
                     MeshTopology.Triangles,
                     3,
                     1,
@@ -61,21 +61,21 @@ public class AtmospherePass : ScriptableRenderPass
         }
 
         using (var builder =
-               renderGraph.AddRasterRenderPass<Atmosphere.DummyPassData>(Atmosphere.PassNames.SkyViewPrecomputation, out _))
+               renderGraph.AddRasterRenderPass<Sky.DummyPassData>(Sky.SkyPassNames.SkyViewPrecomputation, out _))
         {
             builder.UseTexture(luts.transmittanceLut);
             builder.UseTexture(luts.multiScatteringLut);
             builder.SetRenderAttachment(luts.skyViewLut, 0);
 
-            builder.SetRenderFunc((Atmosphere.DummyPassData _, RasterGraphContext context) =>
+            builder.SetRenderFunc((Sky.DummyPassData _, RasterGraphContext context) =>
             {
-                _properties.SetTexture(Atmosphere.ShaderProps.TransmittanceLut, luts.transmittanceLut);
-                _properties.SetTexture(Atmosphere.ShaderProps.MultiScatteringLut, luts.multiScatteringLut);
+                _properties.SetTexture(Sky.SkyShaderExtraProps.TransmittanceLut, luts.transmittanceLut);
+                _properties.SetTexture(Sky.SkyShaderExtraProps.MultiScatteringLut, luts.multiScatteringLut);
 
                 context.cmd.DrawProcedural(
                     Matrix4x4.identity,
                     _material,
-                    (int)Atmosphere.PassIndices.SkyViewPrecomputation,
+                    (int)Sky.SkyPassIndices.SkyViewPrecomputation,
                     MeshTopology.Triangles,
                     3,
                     1,
@@ -85,21 +85,21 @@ public class AtmospherePass : ScriptableRenderPass
         }
 
         using (var builder =
-               renderGraph.AddRasterRenderPass<Atmosphere.DummyPassData>(Atmosphere.PassNames.SkyViewLookup, out _))
+               renderGraph.AddRasterRenderPass<Sky.DummyPassData>(Sky.SkyPassNames.SkyViewLookup, out _))
         {
             builder.UseTexture(luts.transmittanceLut);
             builder.UseTexture(luts.skyViewLut);
             builder.SetRenderAttachment(resourcesData.activeColorTexture, 0);
 
-            builder.SetRenderFunc((Atmosphere.DummyPassData _, RasterGraphContext context) =>
+            builder.SetRenderFunc((Sky.DummyPassData _, RasterGraphContext context) =>
             {
-                _properties.SetTexture(Atmosphere.ShaderProps.TransmittanceLut, luts.transmittanceLut);
-                _properties.SetTexture(Atmosphere.ShaderProps.SkyViewLut, luts.skyViewLut);
+                _properties.SetTexture(Sky.SkyShaderExtraProps.TransmittanceLut, luts.transmittanceLut);
+                _properties.SetTexture(Sky.SkyShaderExtraProps.SkyViewLut, luts.skyViewLut);
 
                 context.cmd.DrawProcedural(
                     Matrix4x4.identity,
                     _material,
-                    (int)Atmosphere.PassIndices.SkyViewLookup,
+                    (int)Sky.SkyPassIndices.SkyViewLookup,
                     MeshTopology.Triangles,
                     3,
                     1,
